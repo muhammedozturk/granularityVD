@@ -1,0 +1,114 @@
+ ######################################
+
+dataframe <- read.csv("E:/makaleler/makaleler/vulnerability/paper4/LLMVulne/repolevel/dataset/dosyaAppConfig.txt")
+words <- dataframe[,1]
+risk_patterns <- list(
+  high_risk = c("permitall","exe","select","access","allowhtml","update","pattern","from","gets","strcmp","regex","process","hash","strcat","strcpy","digest","diagnostics","password","array","equal","index","final","readobject","byte","buffer","user","logged","cmd","name","sendattack","command"),
+  medium_risk = c("cookie", "session", "token", "auth", "login", "logout", "credential", "secret", "privatekey","input", "deserialize", "load", "decode", "encode", "parse", "xml", "json", "yaml", "import", "export"
+,"file", "upload", "download", "path", "directory", "traversal", "include", "require", "open", "write","log", "echo", "print", "trace", "debug", "system", "env", "property","config", "setting", "admin", "reflect", "invoke", "dynamic", "eval"),
+  low_risk = c("string", "value", "object", "data", "length", "size", "count", "number", "char", "set", "get", "util", "helper","if", "else", "for", "while", "loop", "switch", "case", "return", "void", "public", "private", "class", "function", "method"
+,"id", "key", "query", "request", "response", "result", "msg", "message", "info", "flag", "data", "temp", "tmp","list", "map", "vector", "stack", "queue", "state", "global", "local", "save", "store", "load", "null", "true", "false"),
+  safe = c("div", "span", "td", "p", "the", "to", "a")
+)
+library("dplyr")
+library("stringr")
+vulnerability_data <- data.frame(code_word = words) %>%
+  mutate(
+    risk_score = case_when(
+      str_detect(code_word, paste(risk_patterns$high_risk, collapse = "|")) ~ 1,
+      str_detect(code_word, paste(risk_patterns$medium_risk, collapse = "|")) ~ 1,
+      str_detect(code_word, paste(risk_patterns$low_risk, collapse = "|")) ~ 0,  # or 1 depending on context
+      TRUE ~ 0
+    ),
+    is_vulnerable = as.integer(risk_score >= 1)  # Adjust threshold as needed
+  )
+
+print(vulnerability_data)
+labels <- vulnerability_data[,3]
+library("deepnet")
+dataframe <- as.matrix(dataframe)
+dataframe <- dataframe[,-1]
+dataframe_numeric <- apply(dataframe, 2, as.numeric)
+#########improve labeling with some calculations###################
+dataframe_scaled <- scale(dataframe_numeric)
+i <- 1
+while(i <= length(dataframe_numeric[,1])) {
+  if(sum(dataframe_numeric[i,]) > 0.2) {
+    labels[i] <- 1
+  } else {
+    labels[i] <- 0  # You need to specify what happens when condition is FALSE
+  }
+  i <- i + 1
+}
+###############################
+# Remove any non-numeric columns if they exist
+dataframe_numeric <- dataframe_numeric[, sapply(1:ncol(dataframe_numeric), 
+                                               function(i) is.numeric(dataframe_numeric[,i]))]
+
+####################################################
+###############training-testing parts##########################
+rowNumber <- length(dataframe[,1])
+testIndex <- round(rowNumber/4)
+testIndex
+trainIndex <- rowNumber-testIndex
+train <- c(1:trainIndex)
+testIndex <- trainIndex+1
+test <- c(testIndex:length(dataframe[,1]))
+
+
+
+###########FIND OPTIMAL CONFIGURATIONS USING GRID SEARCH##############################
+library("NMOF")
+testFun <- function(x){
+liste <-c(x[1L],x[2L],x[3L],x[4L])
+   return(liste)
+}
+par1 <- runif(10,0.001,0.1)
+par2 <- runif(10,0.9,0.9999)
+par3 <- runif(10,0.5,0.99)
+par4 <- runif(10,100,300)
+sol <- gridSearch(fun = testFun, levels = list(par1, par2, par3, par4))
+sol$minfun
+
+sol$minlevels
+#############################################
+i <- 1
+
+maxAc <- 0.5
+hyperList <- c()
+while(i<=100)
+{
+nn <- nn.train(dataframe_scaled[train,], labels[train], 
+               hidden = c(50, 25, 10),           # Deeper architecture
+               learningrate = sol$values[i],             # Smaller learning rate
+               learningrate_scale = sol$values[i+1],        # Learning rate decay
+               momentum = sol$values[i+2],                   # Add momentum
+               activationfun = "tanh",           # Better activation
+               output = "sigm",                  # Sigmoid for binary
+               numepochs = sol$values[i+3],                  # More epochs
+               batchsize = 16,                   # Smaller batches
+               hidden_dropout = 0.2,             # Regularization
+               visible_dropout = 0.2)
+yy <- nn.predict(nn, dataframe_numeric[test,])
+yhat = matrix(0,length(yy),1)
+yhat[which(yy > mean(yy))] = 1
+yhat[which(yy <= mean(yy))] = 0
+cm = table(labels[test],yhat)
+print(cm)
+accuracy <- (cm[1]+cm[4])/(cm[1]+cm[2]+cm[3]+cm[4])
+print("accuracy")
+print(accuracy)
+if(!is.na(accuracy) && accuracy > maxAc){
+maxAc <- accuracy
+hyperList <- c()
+hyperList <- c(sol$values[i], sol$values[j], sol$values[k], sol$values[m])
+}
+print(i)
+i <- i+1
+print(maxAc)
+print(hyperList)
+}
+
+
+
+
